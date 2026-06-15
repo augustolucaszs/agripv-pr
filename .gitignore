@@ -1,0 +1,22 @@
+# Generated per-day CSV outputs (large, regeneratable from DB)
+mppt_*.csv
+agripv_pr_results.csv
+
+# Environment / credentials
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

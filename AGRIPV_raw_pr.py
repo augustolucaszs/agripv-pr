@@ -6,7 +6,18 @@
 #
 # IEC 61724 PR formula:
 #   PR = Σ(power_W) / (Σ(GPOA) / 1000 × P_nom_W)   — Δt cancels (constant 1-min interval)
-#   Only minutes with GHI ≥ 50 W/m² are included.
+#   Included minutes: GHI ≥ 50 W/m², power_w > 0, GPOA > 0, and not tracker_lag_flag.
+#   Computed twice per MPPT per day: full day, and 10:00-14:00 local-time peak window
+#   (pr_peak / energy_kwh_peak / poa_kwh_m2_peak / n_minutes_peak).
+
+
+# bring power and irrad gpoa ghi to PA dash. add selection item possibility
+# add system status for HOYMILES
+# add power/m2
+
+# nth
+# PR temperature corrected
+# Bifacial PR
 
 import argparse
 import logging
@@ -34,10 +45,10 @@ SITE = location.Location(-27.597, -48.549, tz='America/Sao_Paulo', altitude=3)
 
 MPPT = {
     1: dict(nominal_w=10695, tracking=False, tilt=15.0, azimuth=0.0),
-    2: dict(nominal_w=9265,  tracking=True),
-    3: dict(nominal_w=8720,  tracking=True),
-    4: dict(nominal_w=8720,  tracking=True),
-    5: dict(nominal_w=9265,  tracking=True),
+    2: dict(nominal_w=9350,  tracking=True),
+    3: dict(nominal_w=8800,  tracking=True),
+    4: dict(nominal_w=8800,  tracking=True),
+    5: dict(nominal_w=9350,  tracking=True),
     6: dict(nominal_w=12250, tracking=True),
     7: dict(nominal_w=12250, tracking=True),
 }
@@ -50,6 +61,11 @@ MPPT_STRINGS = {1: [1], 2: [2], 3: [3], 4: [4], 5: [5], 6: [6], 7: [7]}
 MPPT_GROUPS = {2: [2], 3: [3], 4: [4], 5: [5], 6: [6, 7], 7: [8, 9]}
 
 GHI_MIN = 50  # W/m² — exclude low-irradiance minutes from PR
+
+TRACKER_SMOOTH_WIN  = 3    # minutes, centered rolling mean applied to tracker angle for GPOA
+TRACKER_LAG_MAX_DEG = 2.0  # |position - target| above this = tracker in transit, unreliable minute
+
+PEAK_HOUR_START, PEAK_HOUR_END = 10, 14  # local time [10:00, 14:00) — secondary "peak window" PR
 
 
 def _fetch(engine, table, columns, start, end):
@@ -69,7 +85,7 @@ def _compute_poa(df, tilt, azimuth_series):
     Returns ghi_clipped, poa_global (both Series aligned to df.index).
     """
     ghi = df['ghi'].clip(lower=0)
-    low = ghi < 20
+    low = ghi < 50
     ghi_c = ghi.where(~low, 0.0)
 
     solar = SITE.get_solarposition(df.index)
@@ -91,6 +107,25 @@ def _compute_poa(df, tilt, azimuth_series):
     return ghi_c, poa['poa_global']
 
 
+def _pr_stats(filt, nominal_w):
+    """IEC 61724 PR + energy/POA sums for an already-filtered per-minute slice."""
+    n = len(filt)
+    if n == 0:
+        return dict(pr=None, energy_kwh=0.0, poa_kwh_m2=0.0, n_minutes=0)
+
+    # 1-min data: Σ(W) / 60 = Wh; /1000 = kWh
+    energy_kwh = float(filt['power_w'].sum()) / 60 / 1000
+    poa_kwh_m2 = float(filt['gpoa'].sum())    / 60 / 1000
+    pr = energy_kwh / (poa_kwh_m2 * nominal_w / 1000) if poa_kwh_m2 > 0 else None
+
+    return dict(
+        pr=round(pr, 4) if pr is not None else None,
+        energy_kwh=round(energy_kwh, 4),
+        poa_kwh_m2=round(poa_kwh_m2, 4),
+        n_minutes=n,
+    )
+
+
 def process_day(start_date, end_date):
     """
     Returns
@@ -101,7 +136,7 @@ def process_day(start_date, end_date):
     logging.info(f"Processing {start_date}")
 
     inv_raw = _fetch(engine_source, 'agripv_inverter_sma',
-                     [f'dcw_{i}' for i in range(1, 13)], start_date, end_date)
+                     [f'dcw_{i}' for i in range(1, 8)], start_date, end_date)
     met_raw = _fetch(engine_source, 'SapAlbedo_1m',
                      ['GHIA_SMP22_Comp_Avg'], start_date, end_date)
     trk_raw = _fetch(engine_source, 'trackers_suntrack_tcu',
@@ -113,7 +148,7 @@ def process_day(start_date, end_date):
     trk_raw['TIMESTAMP'] = pd.to_datetime(trk_raw['TIMESTAMP'])
 
     inv = inv_raw.set_index('TIMESTAMP').sort_index()
-    for i in range(1, 13):
+    for i in range(1, 8):
         inv[f'dcw_{i}'] = pd.to_numeric(inv[f'dcw_{i}'], errors='coerce')
 
     met = met_raw.set_index('TIMESTAMP').sort_index()
@@ -135,9 +170,10 @@ def process_day(start_date, end_date):
         )
         df1['ghi']           = ghi1
         df1['gpoa']          = gpoa1
-        df1['position_deg']  = MPPT[1]['tilt']
-        df1['target_deg']    = MPPT[1]['tilt']
-        df1['tracker_active']= False
+        df1['position_deg']    = MPPT[1]['tilt']
+        df1['target_deg']      = MPPT[1]['tilt']
+        df1['tracker_active']  = False
+        df1['tracker_lag_flag']= False
 
         pwr = [f'dcw_{i}' for i in MPPT_STRINGS[1] if f'dcw_{i}' in inv.columns]
         if pwr:
@@ -172,10 +208,25 @@ def process_day(start_date, end_date):
         if df.empty:
             continue
 
-        solar = SITE.get_solarposition(df.index)
-        ghi_c, gpoa = _compute_poa(df, tilt='position_deg', azimuth_series=solar['azimuth'])
+        # Tracker lags its setpoint by a few degrees for ~1 min after leaving stow or
+        # during fast backtracking corrections — the angle reading for that minute is
+        # "in transit", not a stable orientation. Flag it so it's excluded from PR sums.
+        df['tracker_lag_flag'] = (df['position_deg'] - df['target_deg']).abs() > TRACKER_LAG_MAX_DEG
+
+        # Smooth the raw angle before computing GPOA to reduce minute-to-minute noise.
+        # The smoothed angle is only used for the GPOA calc — stored position_deg stays raw.
+        df['position_smooth'] = df['position_deg'].rolling(
+            TRACKER_SMOOTH_WIN, center=True, min_periods=1).mean()
+
+        # N-S HSAT azimuth: East-facing (negative angle) = 90°, West-facing (positive) = 270°.
+        # Using solar azimuth here would treat the tracker as 2-axis, overestimating GPOA.
+        hsat_az = pd.Series(
+            np.where(df['position_smooth'] >= 0, 270.0, 90.0), index=df.index
+        )
+        ghi_c, gpoa = _compute_poa(df, tilt='position_smooth', azimuth_series=hsat_az)
         df['ghi']  = ghi_c
         df['gpoa'] = gpoa
+        df.drop(columns=['position_smooth'], inplace=True)
 
         pwr = [f'dcw_{i}' for i in MPPT_STRINGS[mid] if f'dcw_{i}' in inv.columns]
         if pwr:
@@ -192,29 +243,26 @@ def process_day(start_date, end_date):
     daily_rows = []
     for mid, df in mppt_dfs.items():
         nominal_w = MPPT[mid]['nominal_w']
-        mask = (df['ghi'] >= GHI_MIN) & df['power_w'].notna() & (df['gpoa'].fillna(0) > 0)
-        filt = df[mask]
-        n = len(filt)
+        mask = (
+            (df['ghi'] >= GHI_MIN)
+            & df['power_w'].notna() & (df['power_w'] > 0)
+            & (df['gpoa'].fillna(0) > 0)
+            & ~df['tracker_lag_flag']
+        )
 
-        if n == 0:
-            daily_rows.append(dict(date=start_date, mppt_id=mid, pr=None,
-                                   energy_kwh=0.0, poa_kwh_m2=0.0,
-                                   nominal_kw=nominal_w / 1000, n_minutes=0,
-                                   tracking=MPPT[mid]['tracking']))
-            continue
+        local_hour = df['TIMESTAMP'].dt.tz_localize('UTC').dt.tz_convert(SITE.tz).dt.hour
+        peak_mask = mask & local_hour.between(PEAK_HOUR_START, PEAK_HOUR_END - 1)
 
-        # 1-min data: Σ(W) / 60 = Wh; /1000 = kWh
-        energy_kwh  = float(filt['power_w'].sum()) / 60 / 1000
-        poa_kwh_m2  = float(filt['gpoa'].sum())    / 60 / 1000
-        pr = energy_kwh / (poa_kwh_m2 * nominal_w / 1000) if poa_kwh_m2 > 0 else None
+        full = _pr_stats(df[mask], nominal_w)
+        peak = _pr_stats(df[peak_mask], nominal_w)
 
         daily_rows.append(dict(
             date=start_date, mppt_id=mid,
-            pr=round(pr, 4) if pr is not None else None,
-            energy_kwh=round(energy_kwh, 4),
-            poa_kwh_m2=round(poa_kwh_m2, 4),
+            pr=full['pr'], energy_kwh=full['energy_kwh'], poa_kwh_m2=full['poa_kwh_m2'],
+            n_minutes=full['n_minutes'],
+            pr_peak=peak['pr'], energy_kwh_peak=peak['energy_kwh'],
+            poa_kwh_m2_peak=peak['poa_kwh_m2'], n_minutes_peak=peak['n_minutes'],
             nominal_kw=nominal_w / 1000,
-            n_minutes=n,
             tracking=MPPT[mid]['tracking'],
         ))
 
@@ -229,8 +277,10 @@ def process_day(start_date, end_date):
 
 def main():
     parser = argparse.ArgumentParser(description='AGRIPV daily PR — IEC 61724')
-    parser.add_argument('start_date', help='YYYY-MM-DD')
-    parser.add_argument('end_date',   help='YYYY-MM-DD')
+    parser.add_argument('start_date', nargs='?', default=None,
+                        help='YYYY-MM-DD (default: yesterday, for cron use)')
+    parser.add_argument('end_date',   nargs='?', default=None,
+                        help='YYYY-MM-DD (default: same as start_date)')
     parser.add_argument('--csv',        action='store_true',
                         help='Write CSV files instead of pushing to DB')
     parser.add_argument('--daily-only', action='store_true',
@@ -238,6 +288,13 @@ def main():
     parser.add_argument('-d', '--debug',
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO')
     args = parser.parse_args()
+
+    if args.start_date is None:
+        # No args (e.g. cron at midnight) → process yesterday, local time.
+        yesterday = (pd.Timestamp.now(tz=SITE.tz) - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        args.start_date = yesterday
+    if args.end_date is None:
+        args.end_date = args.start_date
 
     logging.basicConfig(level=getattr(logging, args.debug),
                         format='%(asctime)s %(levelname)s %(message)s')

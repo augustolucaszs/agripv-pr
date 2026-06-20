@@ -13,10 +13,10 @@ area. It consists of 7 MPPT channels fed by one SMA inverter:
 | MPPT | Nominal Power | Type            | DC String | Tracker Groups |
 |------|--------------|-----------------|-----------|----------------|
 | 1    | 10.695 kW    | Fixed (N-facing, 15°) | dcw\_1 | — |
-| 2    | 9.265 kW     | Single-axis tracker   | dcw\_2 | Group 2 |
-| 3    | 8.720 kW     | Single-axis tracker   | dcw\_3 | Group 3 |
-| 4    | 8.720 kW     | Single-axis tracker   | dcw\_4 | Group 4 |
-| 5    | 9.265 kW     | Single-axis tracker   | dcw\_5 | Group 5 |
+| 2    | 9.350 kW     | Single-axis tracker   | dcw\_2 | Group 2 |
+| 3    | 8.800 kW     | Single-axis tracker   | dcw\_3 | Group 3 |
+| 4    | 8.800 kW     | Single-axis tracker   | dcw\_4 | Group 4 |
+| 5    | 9.350 kW     | Single-axis tracker   | dcw\_5 | Group 5 |
 | 6    | 12.250 kW    | Single-axis tracker   | dcw\_6 | Groups 6 & 7 |
 | 7    | 12.250 kW    | Single-axis tracker   | dcw\_7 | Groups 8 & 9 |
 
@@ -57,11 +57,23 @@ MPPT's panel surface is computed from the measured Global Horizontal Irradiance 
    ```
 
 3. **Surface orientation per minute:**
-   - *Tracked MPPTs (2–7):* `surface_tilt = |position_a1_degree|`, `surface_azimuth = solar_azimuth`
-     (N–S axis → panel azimuth tracks the sun east–west).
+   - *Tracked MPPTs (2–7):* `surface_tilt = |position_a1_degree_smoothed|`.
+     For a horizontal N–S single-axis tracker the surface azimuth is fixed per half-day:
+     `surface_azimuth = 90°` (East) when the angle is negative (morning tilt),
+     `surface_azimuth = 270°` (West) when the angle is non-negative (afternoon tilt).
+     Using the instantaneous solar azimuth instead would treat the tracker as 2-axis,
+     overestimating beam irradiance by up to ~18% in the morning and depressing PR.
    - *Fixed MPPT 1:* `surface_tilt = 15°`, `surface_azimuth = 0°` (north-facing).
 
-4. Low-irradiance filter: GHI values below 20 W/m² are set to zero before decomposition to
+4. **Tracker angle smoothing + lag exclusion:** the raw `position_a1_degree` is noisy and,
+   for ~1 minute after leaving stow or during fast backtracking corrections, lags its own
+   setpoint (`targetangle_a1_degree`) by several degrees — that minute reflects an
+   in-transit reading, not a stable panel orientation. A 3-minute centered rolling mean is
+   applied to the angle before computing GPOA, and any minute where
+   `|position_a1_degree − targetangle_a1_degree| > 2°` is flagged (`tracker_lag_flag`) and
+   excluded from the PR sums (still written to the per-minute table for visibility).
+
+5. Low-irradiance filter: GHI values below 50 W/m² are set to zero before decomposition to
    avoid numerical artefacts from Erbs at near-zero irradiance.
 
 ### Performance Ratio (IEC 61724-1)
@@ -96,6 +108,15 @@ A PR of 1.0 (100%) means the system produced exactly as much energy as a referen
 with the same nominal power operating at STC efficiency under the actual POA irradiation.
 Values above 1.0 are possible due to spectral effects, cooler temperatures (modules perform
 better below 25 °C), or minor irradiance model errors on partly cloudy days.
+
+#### Peak-window PR (10:00–14:00 local time)
+
+In addition to the full-day PR, a second PR is computed using only minutes between
+10:00 and 14:00 **local time** (`America/Sao_Paulo`). Source `TIMESTAMP` values are stored
+in UTC, so the script converts to local time before filtering by hour — this window avoids
+the low-sun-angle morning/evening minutes where atmospheric and tracker-orientation model
+error is largest. Stored as `pr_peak`, `energy_kwh_peak`, `poa_kwh_m2_peak`,
+`n_minutes_peak` alongside the full-day columns in `AGRIPV_daily_pr`.
 
 ---
 
@@ -153,18 +174,20 @@ Source DB ──► Fetch inverter, meteo, tracker data
                │
                └─► Tracked MPPTs 2–7
                      Average tracker position across groups (for split MPPTs 6 & 7)
-                     GHI → Erbs → Perez → GPOA using |tracker angle|
+                     Flag tracker_lag_flag where |position − target| > 2° (in-transit)
+                     Smooth angle (3-min rolling mean) → GHI → Erbs → Perez → GPOA
                      Join DC power from corresponding dcw_N string
                │
                ▼
          Per-minute DataFrame per MPPT
-         [TIMESTAMP, mppt_id, power_w, gpoa, ghi, position_deg, target_deg, tracker_active]
+         [TIMESTAMP, mppt_id, power_w, gpoa, ghi, position_deg, target_deg,
+          tracker_active, tracker_lag_flag]
                │
                ├─► Upload to AGRIPV_raw_pr_mppt_01..07  (per-minute, clean DB)
                │
                ▼
-         Compute daily PR (IEC 61724) per MPPT
-         Filter: GHI ≥ 50 W/m²
+         Compute daily PR (IEC 61724) per MPPT, full day + 10:00–14:00 local peak window
+         Filter: GHI ≥ 50 W/m², power_w > 0, gpoa > 0, NOT tracker_lag_flag
          PR = Σ(power_w) / (Σ(gpoa) / 1000 × nominal_kw)
                │
                └─► Upload to AGRIPV_daily_pr  (one row per MPPT per day, clean DB)
@@ -188,6 +211,7 @@ One row per minute per MPPT.
 | `position_deg` | float | Tracker tilt angle (°); negative = east, positive = west |
 | `target_deg` | float | Tracker target angle (°) |
 | `tracker_active` | bool | Whether tracker control was active |
+| `tracker_lag_flag` | bool | True if \|position_deg − target_deg\| > 2° (in-transit minute, excluded from PR) |
 
 ### `AGRIPV_daily_pr`
 
@@ -202,6 +226,10 @@ One row per MPPT per day.
 | `poa_kwh_m2` | float | POA irradiation during same period (kWh/m²) |
 | `nominal_kw` | float | MPPT nominal power (kW) |
 | `n_minutes` | int | Number of 1-min data points used in PR calculation |
+| `pr_peak` | float | IEC 61724 PR restricted to 10:00–14:00 local time |
+| `energy_kwh_peak` | float | DC energy produced during the 10:00–14:00 window (kWh) |
+| `poa_kwh_m2_peak` | float | POA irradiation during the 10:00–14:00 window (kWh/m²) |
+| `n_minutes_peak` | int | Number of 1-min data points used in the peak-window PR |
 | `tracking` | bool | Whether MPPT uses a tracker |
 
 ---
@@ -228,13 +256,13 @@ ORDER BY time, mppt_id
 ```sql
 SELECT "TIMESTAMP" AS time, power_w/(gpoa/1000.0*10.695) AS value, 'MPPT 01' AS metric FROM "AGRIPV_raw_pr_mppt_01" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0 AND power_w/(gpoa/1000.0*10.695)<1.5
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*9.265),  'MPPT 02' FROM "AGRIPV_raw_pr_mppt_02" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*9.350),  'MPPT 02' FROM "AGRIPV_raw_pr_mppt_02" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*8.720),  'MPPT 03' FROM "AGRIPV_raw_pr_mppt_03" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*8.800),  'MPPT 03' FROM "AGRIPV_raw_pr_mppt_03" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*8.720),  'MPPT 04' FROM "AGRIPV_raw_pr_mppt_04" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*8.800),  'MPPT 04' FROM "AGRIPV_raw_pr_mppt_04" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*9.265),  'MPPT 05' FROM "AGRIPV_raw_pr_mppt_05" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*9.350),  'MPPT 05' FROM "AGRIPV_raw_pr_mppt_05" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
 UNION ALL
 SELECT "TIMESTAMP", power_w/(gpoa/1000.0*12.250), 'MPPT 06' FROM "AGRIPV_raw_pr_mppt_06" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
 UNION ALL

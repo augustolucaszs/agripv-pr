@@ -44,7 +44,7 @@ engine_clean  = create_engine(_cln_url, echo=False)
 SITE = location.Location(-27.597, -48.549, tz='America/Sao_Paulo', altitude=3)
 
 MPPT = {
-    1: dict(nominal_w=10695, tracking=False, tilt=15.0, azimuth=0.0),
+    1: dict(nominal_w=10695, tracking=False, tilt=27.0, azimuth=0.0),
     2: dict(nominal_w=9350,  tracking=True),
     3: dict(nominal_w=8800,  tracking=True),
     4: dict(nominal_w=8800,  tracking=True),

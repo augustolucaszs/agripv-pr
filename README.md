@@ -13,12 +13,12 @@ area. It consists of 7 MPPT channels fed by one SMA inverter:
 | MPPT | Nominal Power | Type            | DC String | Tracker Groups |
 |------|--------------|-----------------|-----------|----------------|
 | 1    | 10.695 kW    | Fixed (N-facing, 15°) | dcw\_1 | — |
-| 2    | 9.350 kW     | Single-axis tracker   | dcw\_2 | Group 2 |
-| 3    | 8.800 kW     | Single-axis tracker   | dcw\_3 | Group 3 |
-| 4    | 8.800 kW     | Single-axis tracker   | dcw\_4 | Group 4 |
-| 5    | 9.350 kW     | Single-axis tracker   | dcw\_5 | Group 5 |
-| 6    | 12.250 kW    | Single-axis tracker   | dcw\_6 | Groups 6 & 7 |
-| 7    | 12.250 kW    | Single-axis tracker   | dcw\_7 | Groups 8 & 9 |
+| 2    | 9.350 kW     | Single-axis tracker   | dcw\_2 | Group 9 |
+| 3    | 8.800 kW     | Single-axis tracker   | dcw\_3 | Group 8 |
+| 4    | 8.800 kW     | Single-axis tracker   | dcw\_4 | Group 7 |
+| 5    | 9.350 kW     | Single-axis tracker   | dcw\_5 | Group 6 |
+| 6    | 12.250 kW    | Single-axis tracker   | dcw\_6 | Groups 4 & 5 |
+| 7    | 12.250 kW    | Single-axis tracker   | dcw\_7 | Groups 2 & 3 |
 
 Trackers are north–south horizontal single-axis (HSAT). The tracker angle convention is:
 negative = east tilt (morning), positive = west tilt (afternoon), 0° = horizontal.
@@ -32,7 +32,7 @@ obtain a representative tilt angle for irradiance calculation.
 
 | Table | Description | Key columns |
 |-------|-------------|-------------|
-| `agripv_inverter_sma` | 1-min DC power per string | `TIMESTAMP`, `dcw_1`–`dcw_12` (W) |
+| `agripv_inverter_sma` | 1-min DC power per string (script uses MPPT strings 1–7) | `TIMESTAMP`, `dcw_1`–`dcw_7` (W) |
 | `SapAlbedo_1m` | 1-min meteorological data | `TIMESTAMP`, `GHIA_SMP22_Comp_Avg` (GHI, W/m²) |
 | `trackers_suntrack_tcu` | 1-min tracker telemetry | `TIMESTAMP`, `group_id`, `position_a1_degree`, `targetangle_a1_degree`, `btactive_a1` |
 
@@ -49,11 +49,12 @@ MPPT's panel surface is computed from the measured Global Horizontal Irradiance 
 1. **Erbs decomposition** — splits GHI into Direct Normal Irradiance (DNI) and Diffuse
    Horizontal Irradiance (DHI).
 
-2. **Perez sky diffuse model** — accounts for circumsolar and horizon brightening to compute
+2. **Hay-Davies sky diffuse model** — computes the sky diffuse POA component with anisotropic
+  diffuse treatment to obtain
    the total POA irradiance (`poa_global`) at each tracker tilt angle:
 
    ```
-   GPOA = GHI_beam × cos(AOI) + DHI_Perez + GHI × albedo × (1 − cos(tilt)) / 2
+  GPOA = GHI_beam × cos(AOI) + DHI_HayDavies + GHI × albedo × (1 − cos(tilt)) / 2
    ```
 
 3. **Surface orientation per minute:**
@@ -170,12 +171,12 @@ Source DB ──► Fetch inverter, meteo, tracker data
                │
                ├─► Fixed MPPT 1
                │     tilt=15°, azimuth=0° (fixed)
-               │     GHI → Erbs → Perez → GPOA
+               │     GHI → Erbs → Hay-Davies → GPOA
                │
                └─► Tracked MPPTs 2–7
                      Average tracker position across groups (for split MPPTs 6 & 7)
                      Flag tracker_lag_flag where |position − target| > 2° (in-transit)
-                     Smooth angle (3-min rolling mean) → GHI → Erbs → Perez → GPOA
+                     Smooth angle (3-min rolling mean) → GHI → Erbs → Hay-Davies → GPOA
                      Join DC power from corresponding dcw_N string
                │
                ▼
@@ -279,7 +280,7 @@ Set **Format as: Time series** in the Grafana query editor for both queries.
 - **MPPT2 underperformance:** MPPT2 shows PR ≈ 7–10% for most of the dataset due to a hardware
   fault. Exclude it from fleet-level averages: `WHERE mppt_id != 2`.
 
-- **No direct POA sensor per tracker:** GPOA is modelled from GHI using Erbs + Perez. On
+- **No direct POA sensor per tracker:** GPOA is modelled from GHI using Erbs + Hay-Davies. On
   partly cloudy days with rapid irradiance transients, the 1-minute averaging can produce
   instantaneous PR outliers. The daily aggregation (ratio-of-sums) is robust to this.
 
@@ -296,5 +297,5 @@ Set **Format as: Time series** in the Grafana query editor for both queries.
   *Journal of Open Source Software*, 2023.
 - Erbs, D.G., Klein, S.A., Duffie, J.A. — Estimation of the diffuse radiation fraction for
   hourly, daily and monthly-average global radiation. *Solar Energy*, 1982.
-- Perez, R. et al. — Modeling daylight availability and irradiance components from direct and
-  global irradiance. *Solar Energy*, 1990.
+- Hay, J.E. & Davies, J.A. — Calculation of the solar radiation incident on an inclined
+  surface. In *Proceedings, First Canadian Solar Radiation Data Workshop*, 1980.

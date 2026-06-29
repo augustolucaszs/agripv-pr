@@ -57,8 +57,8 @@ MPPT = {
 MPPT_STRINGS = {1: [1], 2: [2], 3: [3], 4: [4], 5: [5], 6: [6], 7: [7]}
 
 # Tracker groups (trackers_suntrack_tcu.group_id) per MPPT
-# MPPTs 6 & 7 each have 2 groups — average their positions for a single GPOA
-MPPT_GROUPS = {2: [2], 3: [3], 4: [4], 5: [5], 6: [6, 7], 7: [8, 9]}
+# Mapping adjusted for validation/comparison as provided by field notes.
+MPPT_GROUPS = {2: [9], 3: [8], 4: [7], 5: [6], 6: [4, 5], 7: [2, 3]}
 
 GHI_MIN = 50  # W/m² — exclude low-irradiance minutes from PR
 
@@ -79,7 +79,7 @@ def _fetch(engine, table, columns, start, end):
 
 def _compute_poa(df, tilt, azimuth_series):
     """
-    Compute plane-of-array irradiance via Erbs decomposition + Perez model.
+    Compute plane-of-array irradiance via Erbs decomposition + Hay-Davies model.
     df must be DatetimeIndex with a 'ghi' column.
     tilt: scalar (degrees) or column name string → abs() applied.
     Returns ghi_clipped, poa_global (both Series aligned to df.index).
@@ -102,7 +102,7 @@ def _compute_poa(df, tilt, azimuth_series):
         solar_azimuth   = solar['azimuth'],
         dni=dni, ghi=ghi_c, dhi=dhi,
         dni_extra=irradiance.get_extra_radiation(df.index),
-        model='perez',
+        model='haydavies',
     )
     return ghi_c, poa['poa_global']
 

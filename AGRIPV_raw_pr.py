@@ -26,7 +26,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import numpy as np
 import pandas as pd
 from pvlib import location, irradiance
@@ -60,7 +60,8 @@ MPPT_STRINGS = {1: [1], 2: [2], 3: [3], 4: [4], 5: [5], 6: [6], 7: [7]}
 # Mapping adjusted for validation/comparison as provided by field notes.
 MPPT_GROUPS = {2: [9], 3: [8], 4: [7], 5: [6], 6: [4, 5], 7: [2, 3]}
 
-GHI_MIN = 50  # W/m² — exclude low-irradiance minutes from PR
+GHI_MIN = 50  # W/m² — (legacy) exclude low-irradiance minutes
+GPOA_MIN = 50  # W/m² — single PR filter: only minutes with GPOA above this are kept
 
 TRACKER_SMOOTH_WIN  = 3    # minutes, centered rolling mean applied to tracker angle for GPOA
 TRACKER_LAG_MAX_DEG = 2.0  # |position - target| above this = tracker in transit, unreliable minute
@@ -244,9 +245,8 @@ def process_day(start_date, end_date):
     for mid, df in mppt_dfs.items():
         nominal_w = MPPT[mid]['nominal_w']
         mask = (
-            (df['ghi'] >= GHI_MIN)
+            (df['gpoa'].fillna(0) > GPOA_MIN)
             & df['power_w'].notna() & (df['power_w'] > 0)
-            & (df['gpoa'].fillna(0) > 0)
             & ~df['tracker_lag_flag']
         )
 
@@ -317,6 +317,18 @@ def main():
             daily_df.to_csv(out / f'daily_pr_{ds}.csv', index=False)
             logging.info(f"  CSV written for {ds}")
         else:
+            # Idempotent rerun: clear the day first so the TIMESTAMP primary key
+            # on AGRIPV_raw_pr_mppt_* never raises a duplicate-key error.
+            with engine_clean.begin() as conn:
+                if not args.daily_only:
+                    for mid in mppt_dfs:
+                        conn.execute(text(
+                            f'DELETE FROM "AGRIPV_raw_pr_mppt_{mid:02d}" '
+                            'WHERE "TIMESTAMP" >= :s AND "TIMESTAMP" < :e'),
+                            {'s': ds, 'e': de})
+                conn.execute(text(
+                    'DELETE FROM "AGRIPV_daily_pr" WHERE date = :d'), {'d': ds})
+
             if not args.daily_only:
                 for mid, df in mppt_dfs.items():
                     df.to_sql(f'AGRIPV_raw_pr_mppt_{mid:02d}', engine_clean,

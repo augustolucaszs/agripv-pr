@@ -53,9 +53,9 @@ MPPT's panel surface is computed from the measured Global Horizontal Irradiance 
   diffuse treatment to obtain
    the total POA irradiance (`poa_global`) at each tracker tilt angle:
 
-   ```
-  GPOA = GHI_beam × cos(AOI) + DHI_HayDavies + GHI × albedo × (1 − cos(tilt)) / 2
-   ```
+   $$
+   G_{POA} = GHI_{beam} \cdot \cos(AOI) + DHI_{HayDavies} + \frac{GHI \cdot \text{albedo} \cdot (1 - \cos(\text{tilt}))}{2}
+   $$
 
 3. **Surface orientation per minute:**
    - *Tracked MPPTs (2–7):* `surface_tilt = |position_a1_degree_smoothed|`.
@@ -81,11 +81,10 @@ MPPT's panel surface is computed from the measured Global Horizontal Irradiance 
 
 The PR is computed as the ratio of daily energy sums, **not** a mean of per-minute ratios:
 
-```
-         Σ [ P_actual(t) · Δt ]
-PR_day = ─────────────────────────────────────────
-         Σ [ GPOA(t) · Δt ] / 1000 × P_nom
-```
+   $$
+   PR_{day} = \frac{\sum \left[ P_{actual}(t) \cdot \Delta t \right]}{\frac{\sum \left[ G_{POA}(t) \cdot \Delta t \right]}{1000} \cdot P_{nom}}
+   $$
+
 
 Where:
 - `P_actual(t)` — measured DC string power at minute `t` (W)
@@ -99,11 +98,10 @@ periods where inverter measurement lag and diffuse scatter cause unreliable per-
 
 The formula simplifies to:
 
-```
-         Σ P_actual(t)
-PR_day = ──────────────────────────
-         Σ GPOA(t) / 1000 × P_nom
-```
+   $$
+   PR_{day} = \frac{\sum P_{actual}(t)}{\frac{\sum G_{POA}(t)}{1000} \cdot P_{nom}}
+   $$
+
 
 A PR of 1.0 (100%) means the system produced exactly as much energy as a reference system
 with the same nominal power operating at STC efficiency under the actual POA irradiation.

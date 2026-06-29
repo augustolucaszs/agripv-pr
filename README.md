@@ -12,7 +12,7 @@ area. It consists of 7 MPPT channels fed by one SMA inverter:
 
 | MPPT | Nominal Power | Type            | DC String | Tracker Groups |
 |------|--------------|-----------------|-----------|----------------|
-| 1    | 10.695 kW    | Fixed (N-facing, 15°) | dcw\_1 | — |
+| 1    | 10.695 kW    | Fixed (N-facing, 27°) | dcw\_1 | — |
 | 2    | 9.350 kW     | Single-axis tracker   | dcw\_2 | Group 9 |
 | 3    | 8.800 kW     | Single-axis tracker   | dcw\_3 | Group 8 |
 | 4    | 8.800 kW     | Single-axis tracker   | dcw\_4 | Group 7 |
@@ -64,7 +64,7 @@ MPPT's panel surface is computed from the measured Global Horizontal Irradiance 
      `surface_azimuth = 270°` (West) when the angle is non-negative (afternoon tilt).
      Using the instantaneous solar azimuth instead would treat the tracker as 2-axis,
      overestimating beam irradiance by up to ~18% in the morning and depressing PR.
-   - *Fixed MPPT 1:* `surface_tilt = 15°`, `surface_azimuth = 0°` (north-facing).
+   - *Fixed MPPT 1:* `surface_tilt = 27°`, `surface_azimuth = 0°` (north-facing).
 
 4. **Tracker angle smoothing + lag exclusion:** the raw `position_a1_degree` is noisy and,
    for ~1 minute after leaving stow or during fast backtracking corrections, lags its own
@@ -93,8 +93,11 @@ Where:
 - `P_nom` — MPPT nominal DC power (W)
 - Division by 1000 converts irradiance from W/m² to kW/m² for unit consistency
 
-Only minutes where **GHI ≥ 50 W/m²** are included in the sums. This excludes dawn/dusk
-periods where inverter measurement lag and diffuse scatter cause unreliable per-minute ratios.
+Only minutes where **GPOA > 50 W/m²** are included in the sums (together with
+`power_w > 0` and not `tracker_lag_flag`). Filtering on plane-of-array irradiance
+rather than GHI keeps the inclusion criterion consistent with the quantity in the PR
+denominator and excludes dawn/dusk minutes where inverter measurement lag and diffuse
+scatter cause unreliable per-minute ratios.
 
 The formula simplifies to:
 
@@ -168,7 +171,7 @@ Source DB ──► Fetch inverter, meteo, tracker data
          Prep & align timestamps
                │
                ├─► Fixed MPPT 1
-               │     tilt=15°, azimuth=0° (fixed)
+               │     tilt=27°, azimuth=0° (fixed)
                │     GHI → Erbs → Hay-Davies → GPOA
                │
                └─► Tracked MPPTs 2–7
@@ -186,7 +189,7 @@ Source DB ──► Fetch inverter, meteo, tracker data
                │
                ▼
          Compute daily PR (IEC 61724) per MPPT, full day + 10:00–14:00 local peak window
-         Filter: GHI ≥ 50 W/m², power_w > 0, gpoa > 0, NOT tracker_lag_flag
+         Filter: gpoa > 50 W/m², power_w > 0, NOT tracker_lag_flag
          PR = Σ(power_w) / (Σ(gpoa) / 1000 × nominal_kw)
                │
                └─► Upload to AGRIPV_daily_pr  (one row per MPPT per day, clean DB)
@@ -198,7 +201,10 @@ Source DB ──► Fetch inverter, meteo, tracker data
 
 ### `AGRIPV_raw_pr_mppt_01` through `AGRIPV_raw_pr_mppt_07`
 
-One row per minute per MPPT.
+One row per minute per MPPT. `TIMESTAMP` is the **primary key**, so each minute is stored
+only once. Re-running the script for a date that already exists is safe: the script deletes
+that day from every clean table before re-inserting (idempotent reruns), so no duplicates are
+ever created.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -221,7 +227,7 @@ One row per MPPT per day.
 | `date` | text | Date (YYYY-MM-DD) |
 | `mppt_id` | int | MPPT index (1–7) |
 | `pr` | float | IEC 61724 daily Performance Ratio |
-| `energy_kwh` | float | DC energy produced during GHI ≥ 50 W/m² period (kWh) |
+| `energy_kwh` | float | DC energy produced during GPOA > 50 W/m² period (kWh) |
 | `poa_kwh_m2` | float | POA irradiation during same period (kWh/m²) |
 | `nominal_kw` | float | MPPT nominal power (kW) |
 | `n_minutes` | int | Number of 1-min data points used in PR calculation |
@@ -253,19 +259,19 @@ ORDER BY time, mppt_id
 ### Instantaneous DC power ratio — all MPPTs (per-minute)
 
 ```sql
-SELECT "TIMESTAMP" AS time, power_w/(gpoa/1000.0*10.695) AS value, 'MPPT 01' AS metric FROM "AGRIPV_raw_pr_mppt_01" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0 AND power_w/(gpoa/1000.0*10.695)<1.5
+SELECT "TIMESTAMP" AS time, power_w/(gpoa/1000.0*10.695) AS value, 'MPPT 01' AS metric FROM "AGRIPV_raw_pr_mppt_01" WHERE $__timeFilter("TIMESTAMP") AND gpoa>50 AND power_w/(gpoa/1000.0*10.695)<1.5
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*9.350),  'MPPT 02' FROM "AGRIPV_raw_pr_mppt_02" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*9.350),  'MPPT 02' FROM "AGRIPV_raw_pr_mppt_02" WHERE $__timeFilter("TIMESTAMP") AND gpoa>50
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*8.800),  'MPPT 03' FROM "AGRIPV_raw_pr_mppt_03" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*8.800),  'MPPT 03' FROM "AGRIPV_raw_pr_mppt_03" WHERE $__timeFilter("TIMESTAMP") AND gpoa>50
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*8.800),  'MPPT 04' FROM "AGRIPV_raw_pr_mppt_04" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*8.800),  'MPPT 04' FROM "AGRIPV_raw_pr_mppt_04" WHERE $__timeFilter("TIMESTAMP") AND gpoa>50
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*9.350),  'MPPT 05' FROM "AGRIPV_raw_pr_mppt_05" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*9.350),  'MPPT 05' FROM "AGRIPV_raw_pr_mppt_05" WHERE $__timeFilter("TIMESTAMP") AND gpoa>50
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*12.250), 'MPPT 06' FROM "AGRIPV_raw_pr_mppt_06" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*12.250), 'MPPT 06' FROM "AGRIPV_raw_pr_mppt_06" WHERE $__timeFilter("TIMESTAMP") AND gpoa>50
 UNION ALL
-SELECT "TIMESTAMP", power_w/(gpoa/1000.0*12.250), 'MPPT 07' FROM "AGRIPV_raw_pr_mppt_07" WHERE $__timeFilter("TIMESTAMP") AND ghi>=50 AND gpoa>0
+SELECT "TIMESTAMP", power_w/(gpoa/1000.0*12.250), 'MPPT 07' FROM "AGRIPV_raw_pr_mppt_07" WHERE $__timeFilter("TIMESTAMP") AND gpoa>50
 ORDER BY time, metric
 ```
 

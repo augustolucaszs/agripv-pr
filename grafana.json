@@ -11511,16 +11511,24 @@
         "type": "custom"
       },
       {
-        "allValue": "1,2,3,4,5,6,7",
         "current": {
-          "text": [],
-          "value": []
+          "text": [
+            "(nenhum)"
+          ],
+          "value": [
+            "-1"
+          ]
         },
-        "includeAll": true,
+        "includeAll": false,
         "label": "Add MPPT",
         "multi": true,
         "name": "mppt",
         "options": [
+          {
+            "selected": true,
+            "text": "(nenhum)",
+            "value": "-1"
+          },
           {
             "selected": false,
             "text": "MPPT 1",
@@ -11557,20 +11565,28 @@
             "value": "7"
           }
         ],
-        "query": "MPPT 1 : 1, MPPT 2 : 2, MPPT 3 : 3, MPPT 4 : 4, MPPT 5 : 5, MPPT 6 : 6, MPPT 7 : 7",
+        "query": "(nenhum) : -1, MPPT 1 : 1, MPPT 2 : 2, MPPT 3 : 3, MPPT 4 : 4, MPPT 5 : 5, MPPT 6 : 6, MPPT 7 : 7",
         "type": "custom"
       },
       {
-        "allValue": "2,3,4,5,6,7,8,9",
         "current": {
-          "text": [],
-          "value": []
+          "text": [
+            "(nenhum)"
+          ],
+          "value": [
+            "-1"
+          ]
         },
-        "includeAll": true,
+        "includeAll": false,
         "label": "Add Tracker",
         "multi": true,
         "name": "tracker",
         "options": [
+          {
+            "selected": true,
+            "text": "(nenhum)",
+            "value": "-1"
+          },
           {
             "selected": false,
             "text": "Tracker 2",
@@ -11612,7 +11628,7 @@
             "value": "9"
           }
         ],
-        "query": "Tracker 2 : 2, Tracker 3 : 3, Tracker 4 : 4, Tracker 5 : 5, Tracker 6 : 6, Tracker 7 : 7, Tracker 8 : 8, Tracker 9 : 9",
+        "query": "(nenhum) : -1, Tracker 2 : 2, Tracker 3 : 3, Tracker 4 : 4, Tracker 5 : 5, Tracker 6 : 6, Tracker 7 : 7, Tracker 8 : 8, Tracker 9 : 9",
         "type": "custom"
       }
     ]

@@ -3931,7 +3931,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\r\n    \"TIMESTAMP\" AS time,\r\n    'Group ' || group_id AS group_name,\r\n    targetangle_a1_degree AS \"Target Angle\",\r\n    position_a1_degree AS \"Actual Angle\",\r\n    btactive_a1 AS \"BackTrack\"\r\nFROM trackers_suntrack_tcu \r\nWHERE $__timeFilter(\"TIMESTAMP\")\r\nORDER BY \"TIMESTAMP\", group_id\r\n",
+          "rawSql": "SELECT\r\n    \"TIMESTAMP\" AS time,\r\n    'Group ' || group_id AS group_name,\r\n    targetangle_a1_degree AS \"Target Angle\",\r\n    position_a1_degree AS \"Actual Angle\",\r\n    btactive_a1 AS \"BackTrack\"\r\nFROM trackers_suntrack_tcu \r\nWHERE $__timeFilter(\"TIMESTAMP\")\r\n  AND ( group_id IN (SELECT t FROM (VALUES (2,9),(3,8),(4,7),(5,6),(6,4),(6,5),(7,2),(7,3)) AS m(mppt,t) WHERE m.mppt = ANY(('{'||'${system:csv}'||'}')::int[])) OR group_id = ANY(('{'||'${tracker:csv}'||'}')::int[]) )\r\nORDER BY \"TIMESTAMP\", group_id\r\n",
           "refId": "Angles",
           "sql": {
             "columns": [
@@ -4162,7 +4162,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH time_series AS (\r\n    SELECT generate_series(\r\n        date_trunc('minute', $__timeFrom()::timestamp),\r\n        date_trunc('minute', $__timeTo()::timestamp),\r\n        interval '1 minute'\r\n    ) AS time\r\n),\r\n\r\ngroups AS (\r\n    SELECT DISTINCT group_id\r\n    FROM trackers_suntrack_tcu\r\n),\r\n\r\nbase AS (\r\n    SELECT\r\n        date_trunc('minute', t.\"TIMESTAMP\") AS time,\r\n        t.group_id,\r\n\r\n        MAX(ABS(t.position_a1_degree - t.targetangle_a1_degree)) AS max_diff,\r\n\r\n        MAX(s.\"GHIA_SMP22_Comp_Avg\") AS irrad,\r\n\r\n        BOOL_OR(t.position_a1_degree IS NULL) AS missing_position,\r\n        BOOL_OR(t.targetangle_a1_degree IS NULL) AS missing_target\r\n\r\n    FROM trackers_suntrack_tcu t\r\n    LEFT JOIN \"SapAlbedo_1m\" s\r\n        ON date_trunc('minute', t.\"TIMESTAMP\") = date_trunc('minute', s.\"TIMESTAMP\")\r\n\r\n    WHERE $__timeFilter(t.\"TIMESTAMP\")\r\n\r\n    GROUP BY 1, 2\r\n)\r\n\r\nSELECT\r\n    ts.time,\r\n    'Group ' || g.group_id AS group_name,\r\n\r\n    CASE\r\n        WHEN b.time IS NULL THEN FALSE\r\n\r\n        WHEN b.missing_position = TRUE \r\n          OR b.missing_target = TRUE THEN FALSE\r\n\r\n        WHEN b.irrad > 50 \r\n          AND b.max_diff > 2 THEN FALSE\r\n    END AS availability\r\n\r\nFROM time_series ts\r\nCROSS JOIN groups g\r\nLEFT JOIN base b\r\n    ON b.time = ts.time \r\n   AND b.group_id = g.group_id\r\n\r\nORDER BY ts.time, g.group_id;",
+          "rawSql": "WITH time_series AS (\r\n    SELECT generate_series(\r\n        date_trunc('minute', $__timeFrom()::timestamp),\r\n        date_trunc('minute', $__timeTo()::timestamp),\r\n        interval '1 minute'\r\n    ) AS time\r\n),\r\n\r\ngroups AS (\r\n    SELECT DISTINCT group_id\r\n    FROM trackers_suntrack_tcu\r\n    WHERE ( group_id IN (SELECT t FROM (VALUES (2,9),(3,8),(4,7),(5,6),(6,4),(6,5),(7,2),(7,3)) AS m(mppt,t) WHERE m.mppt = ANY(('{'||'${system:csv}'||'}')::int[])) OR group_id = ANY(('{'||'${tracker:csv}'||'}')::int[]) )\r\n),\r\n\r\nbase AS (\r\n    SELECT\r\n        date_trunc('minute', t.\"TIMESTAMP\") AS time,\r\n        t.group_id,\r\n\r\n        MAX(ABS(t.position_a1_degree - t.targetangle_a1_degree)) AS max_diff,\r\n\r\n        MAX(s.\"GHIA_SMP22_Comp_Avg\") AS irrad,\r\n\r\n        BOOL_OR(t.position_a1_degree IS NULL) AS missing_position,\r\n        BOOL_OR(t.targetangle_a1_degree IS NULL) AS missing_target\r\n\r\n    FROM trackers_suntrack_tcu t\r\n    LEFT JOIN \"SapAlbedo_1m\" s\r\n        ON date_trunc('minute', t.\"TIMESTAMP\") = date_trunc('minute', s.\"TIMESTAMP\")\r\n\r\n    WHERE $__timeFilter(t.\"TIMESTAMP\")\r\n\r\n    GROUP BY 1, 2\r\n)\r\n\r\nSELECT\r\n    ts.time,\r\n    'Group ' || g.group_id AS group_name,\r\n\r\n    CASE\r\n        WHEN b.time IS NULL THEN FALSE\r\n\r\n        WHEN b.missing_position = TRUE \r\n          OR b.missing_target = TRUE THEN FALSE\r\n\r\n        WHEN b.irrad > 50 \r\n          AND b.max_diff > 2 THEN FALSE\r\n    END AS availability\r\n\r\nFROM time_series ts\r\nCROSS JOIN groups g\r\nLEFT JOIN base b\r\n    ON b.time = ts.time \r\n   AND b.group_id = g.group_id\r\n\r\nORDER BY ts.time, g.group_id;",
           "refId": "Angles",
           "sql": {
             "columns": [
@@ -6515,7 +6515,7 @@
           "format": "time_series",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT\r\n  date_trunc('month', \"date\"::date)::timestamp AS \"time\",\r\n  (SUM(energy_kwh_peak) / (SUM(poa_kwh_m2_peak) * MAX(nominal_kw)))::double precision AS \"value\",\r\n  'MPPT ' || lpad(mppt_id::text, 2, '0') AS metric\r\nFROM \"AGRIPV_daily_pr\"\r\nWHERE \"date\"::date BETWEEN $__timeFrom()::date\r\n                       AND $__timeTo()::date\r\n  AND pr_peak IS NOT NULL\r\n  AND pr_peak > 0\r\n  AND pr_peak < 1.5\r\n  AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\nGROUP BY date_trunc('month', \"date\"::date), mppt_id\r\nHAVING SUM(poa_kwh_m2_peak) > 0\r\nORDER BY\r\n  \"time\",\r\n  metric;",
+          "rawSql": "SELECT\r\n  date_trunc('month', \"date\"::date)::timestamp AS \"time\",\r\n  (SUM(energy_kwh_peak) / (SUM(poa_kwh_m2_peak) * MAX(nominal_kw)))::double precision AS \"value\",\r\n  'MPPT ' || lpad(mppt_id::text, 2, '0') AS metric\r\nFROM \"AGRIPV_daily_pr\"\r\nWHERE \"date\"::date BETWEEN $__timeFrom()::date\r\n                       AND $__timeTo()::date\r\n  AND pr_peak IS NOT NULL\r\n  AND pr_peak > 0\r\n  AND pr_peak < 1.5\r\n  AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\nGROUP BY date_trunc('month', \"date\"::date), mppt_id\r\nHAVING SUM(poa_kwh_m2_peak) > 0\r\nORDER BY\r\n  \"time\",\r\n  metric;",
           "refId": "mppt_01",
           "sql": {
             "columns": [
@@ -6895,7 +6895,7 @@
           "format": "time_series",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT\r\n  \"date\"::date::timestamp AS \"time\",\r\n  pr_peak::double precision AS \"value\",\r\n  'MPPT ' || lpad(mppt_id::text, 2, '0') AS metric\r\nFROM \"AGRIPV_daily_pr\"\r\nWHERE \"date\"::date BETWEEN $__timeFrom()::date\r\n                       AND $__timeTo()::date\r\n  AND pr_peak IS NOT NULL\r\n  AND pr_peak > 0\r\n  AND pr_peak < 1.5\r\n  AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\nORDER BY\r\n  \"time\",\r\n  metric;",
+          "rawSql": "SELECT\r\n  \"date\"::date::timestamp AS \"time\",\r\n  pr_peak::double precision AS \"value\",\r\n  'MPPT ' || lpad(mppt_id::text, 2, '0') AS metric\r\nFROM \"AGRIPV_daily_pr\"\r\nWHERE \"date\"::date BETWEEN $__timeFrom()::date\r\n                       AND $__timeTo()::date\r\n  AND pr_peak IS NOT NULL\r\n  AND pr_peak > 0\r\n  AND pr_peak < 1.5\r\n  AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\nORDER BY\r\n  \"time\",\r\n  metric;",
           "refId": "mppt_01",
           "sql": {
             "columns": [
@@ -7612,7 +7612,7 @@
           "format": "table",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT \"TIMESTAMP\", gpoa as \"GPOA 1\" FROM \"AGRIPV_raw_pr_mppt_01\" WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system) \nORDER BY \"TIMESTAMP\";",
+          "rawSql": "SELECT \"TIMESTAMP\", gpoa as \"GPOA 1\" FROM \"AGRIPV_raw_pr_mppt_01\" WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[])) \nORDER BY \"TIMESTAMP\";",
           "refId": "D",
           "sql": {
             "columns": [
@@ -7656,7 +7656,7 @@
           "format": "table",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 2\" FROM \"AGRIPV_raw_pr_mppt_02\" WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system) \nORDER BY \"TIMESTAMP\";",
+          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 2\" FROM \"AGRIPV_raw_pr_mppt_02\" WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[])) \nORDER BY \"TIMESTAMP\";",
           "refId": "E",
           "sql": {
             "columns": [
@@ -7700,7 +7700,7 @@
           "format": "table",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 3\" FROM \"AGRIPV_raw_pr_mppt_03\" WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system) \nORDER BY \"TIMESTAMP\";",
+          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 3\" FROM \"AGRIPV_raw_pr_mppt_03\" WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[])) \nORDER BY \"TIMESTAMP\";",
           "refId": "A",
           "sql": {
             "columns": [
@@ -7744,7 +7744,7 @@
           "format": "table",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 4\" FROM \"AGRIPV_raw_pr_mppt_04\" WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system) \nORDER BY \"TIMESTAMP\";",
+          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 4\" FROM \"AGRIPV_raw_pr_mppt_04\" WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[])) \nORDER BY \"TIMESTAMP\";",
           "refId": "F",
           "sql": {
             "columns": [
@@ -7788,7 +7788,7 @@
           "format": "table",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 5\" FROM \"AGRIPV_raw_pr_mppt_05\" WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system) \nORDER BY \"TIMESTAMP\";",
+          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 5\" FROM \"AGRIPV_raw_pr_mppt_05\" WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[])) \nORDER BY \"TIMESTAMP\";",
           "refId": "G",
           "sql": {
             "columns": [
@@ -7832,7 +7832,7 @@
           "format": "table",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 6\" FROM \"AGRIPV_raw_pr_mppt_06\" WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system) \nORDER BY \"TIMESTAMP\";",
+          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 6\" FROM \"AGRIPV_raw_pr_mppt_06\" WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[])) \nORDER BY \"TIMESTAMP\";",
           "refId": "H",
           "sql": {
             "columns": [
@@ -7876,7 +7876,7 @@
           "format": "table",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 7\" FROM \"AGRIPV_raw_pr_mppt_07\" WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system) \nORDER BY \"TIMESTAMP\";",
+          "rawSql": "SELECT \"TIMESTAMP\", gpoa AS \"GPOA 7\" FROM \"AGRIPV_raw_pr_mppt_07\" WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[])) \nORDER BY \"TIMESTAMP\";",
           "refId": "I",
           "sql": {
             "columns": [
@@ -8347,7 +8347,7 @@
           "format": "time_series",
           "hide": false,
           "rawQuery": true,
-          "rawSql": "WITH base AS (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w,\r\n    gpoa,\r\n    ghi,\r\n    tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_01\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\n)\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 0.345 * 31.0, 0) AS value,\r\n  'MPPT 01' AS metric\r\nFROM base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 9.350, 0) AS value,\r\n  'MPPT 02' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_02\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 8.800, 0) AS value,\r\n  'MPPT 03' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_03\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 8.800, 0) AS value,\r\n  'MPPT 04' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_04\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 9.350, 0) AS value,\r\n  'MPPT 05' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_05\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 12.250, 0) AS value,\r\n  'MPPT 06' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_06\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 12.250, 0) AS value,\r\n  'MPPT 07' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_07\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND mppt_id IN ($mppt) AND mppt_id IN ($system)\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\nORDER BY time, metric;",
+          "rawSql": "WITH base AS (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w,\r\n    gpoa,\r\n    ghi,\r\n    tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_01\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\n)\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 0.345 * 31.0, 0) AS value,\r\n  'MPPT 01' AS metric\r\nFROM base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 9.350, 0) AS value,\r\n  'MPPT 02' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_02\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 8.800, 0) AS value,\r\n  'MPPT 03' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_03\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 8.800, 0) AS value,\r\n  'MPPT 04' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_04\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 9.350, 0) AS value,\r\n  'MPPT 05' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_05\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 12.250, 0) AS value,\r\n  'MPPT 06' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_06\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\n\r\nUNION ALL\r\n\r\nSELECT\r\n  \"TIMESTAMP\" AS time,\r\n  (power_w/1000.0) / NULLIF(gpoa / 1000.0 * 12.250, 0) AS value,\r\n  'MPPT 07' AS metric\r\nFROM (\r\n  SELECT\r\n    \"TIMESTAMP\",\r\n    (\"TIMESTAMP\" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS local_ts,\r\n    power_w, gpoa, ghi, tracker_lag_flag\r\n  FROM \"AGRIPV_raw_pr_mppt_07\"\r\n  WHERE $__timeFilter(\"TIMESTAMP\") AND (mppt_id = ANY(('{'||'${system:csv}'||'}')::int[]) OR mppt_id = ANY(('{'||'${mppt:csv}'||'}')::int[]))\r\n) base\r\nWHERE ghi >= 50\r\n  AND gpoa > 0\r\n  AND power_w > 0\r\n  AND NOT tracker_lag_flag\r\n  AND local_ts::time >= TIME '10:00'\r\n  AND local_ts::time <  TIME '14:00'\r\nORDER BY time, metric;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -11477,60 +11477,6 @@
           ]
         },
         "includeAll": true,
-        "label": "Select MPPT",
-        "multi": true,
-        "name": "mppt",
-        "options": [
-          {
-            "selected": false,
-            "text": "1",
-            "value": "1"
-          },
-          {
-            "selected": false,
-            "text": "2",
-            "value": "2"
-          },
-          {
-            "selected": false,
-            "text": "3",
-            "value": "3"
-          },
-          {
-            "selected": false,
-            "text": "4",
-            "value": "4"
-          },
-          {
-            "selected": false,
-            "text": "5",
-            "value": "5"
-          },
-          {
-            "selected": false,
-            "text": "6",
-            "value": "6"
-          },
-          {
-            "selected": false,
-            "text": "7",
-            "value": "7"
-          }
-        ],
-        "query": "1, 2, 3, 4, 5, 6, 7",
-        "type": "custom"
-      },
-      {
-        "allValue": "1,2,3,4,5,6,7",
-        "current": {
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
-        },
-        "includeAll": true,
         "label": "Select System",
         "multi": true,
         "name": "system",
@@ -11562,6 +11508,111 @@
           }
         ],
         "query": "Fixo : 1, Convencional Oeste : 2\\,3, Convencional Leste : 4\\,5, Semitransparente Oeste : 6, Semitransparente Leste : 7",
+        "type": "custom"
+      },
+      {
+        "allValue": "1,2,3,4,5,6,7",
+        "current": {
+          "text": [],
+          "value": []
+        },
+        "includeAll": true,
+        "label": "Add MPPT",
+        "multi": true,
+        "name": "mppt",
+        "options": [
+          {
+            "selected": false,
+            "text": "MPPT 1",
+            "value": "1"
+          },
+          {
+            "selected": false,
+            "text": "MPPT 2",
+            "value": "2"
+          },
+          {
+            "selected": false,
+            "text": "MPPT 3",
+            "value": "3"
+          },
+          {
+            "selected": false,
+            "text": "MPPT 4",
+            "value": "4"
+          },
+          {
+            "selected": false,
+            "text": "MPPT 5",
+            "value": "5"
+          },
+          {
+            "selected": false,
+            "text": "MPPT 6",
+            "value": "6"
+          },
+          {
+            "selected": false,
+            "text": "MPPT 7",
+            "value": "7"
+          }
+        ],
+        "query": "MPPT 1 : 1, MPPT 2 : 2, MPPT 3 : 3, MPPT 4 : 4, MPPT 5 : 5, MPPT 6 : 6, MPPT 7 : 7",
+        "type": "custom"
+      },
+      {
+        "allValue": "2,3,4,5,6,7,8,9",
+        "current": {
+          "text": [],
+          "value": []
+        },
+        "includeAll": true,
+        "label": "Add Tracker",
+        "multi": true,
+        "name": "tracker",
+        "options": [
+          {
+            "selected": false,
+            "text": "Tracker 2",
+            "value": "2"
+          },
+          {
+            "selected": false,
+            "text": "Tracker 3",
+            "value": "3"
+          },
+          {
+            "selected": false,
+            "text": "Tracker 4",
+            "value": "4"
+          },
+          {
+            "selected": false,
+            "text": "Tracker 5",
+            "value": "5"
+          },
+          {
+            "selected": false,
+            "text": "Tracker 6",
+            "value": "6"
+          },
+          {
+            "selected": false,
+            "text": "Tracker 7",
+            "value": "7"
+          },
+          {
+            "selected": false,
+            "text": "Tracker 8",
+            "value": "8"
+          },
+          {
+            "selected": false,
+            "text": "Tracker 9",
+            "value": "9"
+          }
+        ],
+        "query": "Tracker 2 : 2, Tracker 3 : 3, Tracker 4 : 4, Tracker 5 : 5, Tracker 6 : 6, Tracker 7 : 7, Tracker 8 : 8, Tracker 9 : 9",
         "type": "custom"
       }
     ]

@@ -175,7 +175,7 @@ Source DB ──► Fetch inverter, meteo, tracker data
                │     GHI → Erbs → Hay-Davies → GPOA
                │
                └─► Tracked MPPTs 2–7
-                     Average tracker position across groups (for split MPPTs 6 & 7)
+                     Average mppts' tracker position (for split MPPTs 6 & 7)
                      Flag tracker_lag_flag where |position − target| > 2° (in-transit)
                      Smooth angle (3-min rolling mean) → GHI → Erbs → Hay-Davies → GPOA
                      Join DC power from corresponding dcw_N string
